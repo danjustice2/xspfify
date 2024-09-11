@@ -34,4 +34,5 @@ python main.py
 ```
 6. If everything has gone as it should, you should be greeted by a prompt asking you for your client ID. This is where you will use the credentials obtained in the last section.
 7. If this is the first time you're running the script, it should open a browser where you will need to authorize your app to access your Spotify account.
+8. After authorizing, you will be redirected to `https://example.org/callback?code=somereallylongcodehere`. Copy the URL into the console when prompted.
 8. After authourizing the app, the script should start outputting your playlists to `~/Playlists` (on Windows: `C:\Users\YOUR USERNAME\Playlists`). You can change this directory in main.py if you wish.

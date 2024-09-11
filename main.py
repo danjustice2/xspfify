@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 import codecs
 import requests
 from xml.sax.saxutils import escape
@@ -13,15 +14,19 @@ import argparse
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-REDIRECT_URI = 'https://www.example.com/' # Set your redirect URI
+REDIRECT_URI = 'https://example.org/callback' # Set your redirect URI
 SPOTIFY_BASE_URL = "https://api.spotify.com"
 
 # Maximum 50. This is how many playlists the script will request from Spotify at a time. All your playlists will be saved by looping through the requests untill all playlists have been received.
 PLAYLIST_LIMIT = 50
 
-
+# This is a soft limit for how long exported playlists should be. They will still be exported, but a warning will be displayed in the console. I'm not sure what the reason for including this in the original project was.
 SONG_LIMIT = 100
-OUTPUT_PATH = os.path.expanduser('~/Playlists') # Use home directory for default path
+
+# The output path for the playlists.
+OUTPUT_PATH = os.path.expanduser('~/Playlists')
+
+# For making sure the file names of the playlists don't cause issues.
 SANITIZER = re.compile('[a-zA-Z ()0-9]+')
 
 # Function to set up environment variables for Spotify credentials
@@ -35,7 +40,7 @@ def setup_environment():
 
 # Authenticate and get token
 def authenticate_spotify():
-    sp_oauth = SpotifyOAuth(client_id=CLIENT_ID, client_secret=CLIENT_SECRET, redirect_uri=REDIRECT_URI, scope="playlist-read-private")
+    sp_oauth = SpotifyOAuth(client_id=CLIENT_ID, client_secret=CLIENT_SECRET, redirect_uri=REDIRECT_URI, scope="playlist-read-private,user-library-read")
     token_info = sp_oauth.get_access_token()
     return token_info['access_token']
 
@@ -95,6 +100,37 @@ def get_playlist_tracks(playlist_id):
         })
     return tracks
 
+def get_saved_tracks(limit=50, offset=0):
+    url = SPOTIFY_BASE_URL + f'/v1/me/tracks?limit={limit}&offset={offset}'
+    headers = get_auth_header()
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        logging.error(f"Unable to fetch saved tracks. Status code: {response.status_code}, Message: {response.json()['error']['message']}")
+        return []
+    logging.info(f"Fetched saved tracks.")
+    return response.json()
+
+def get_saved_tracks_list():
+    offset = 0
+    saved_tracks_data = get_saved_tracks()
+    if not saved_tracks_data:
+        return []
+    total = saved_tracks_data['total']
+    limit = 50
+    saved_tracks = []
+    while offset < total:
+        tracks_data = get_saved_tracks(offset=offset, limit=limit)
+        for t in tracks_data['items']:
+            tr = t['track']
+            saved_tracks.append({
+                'title': tr['name'],
+                'artist': tr['artists'][0]['name'],
+                'album': tr['album']['name']
+            })
+        offset += limit
+    logging.info(f"Collected {len(saved_tracks)} saved tracks.")
+    return saved_tracks
+
 def get_track_xspf_fragment(track_info, omit_album=True):
     ret_str = "<track>"
     if track_info['artist']:
@@ -113,6 +149,15 @@ def convert_spotify_playlist_to_xspf(playlist_id, omit_album=True):
         xspf += get_track_xspf_fragment(track_info, omit_album=omit_album)
     xspf += """</trackList></playlist>"""
     logging.info(f"Converted playlist {playlist_id} to XSPF format.")
+    return xspf
+
+def convert_saved_tracks_to_xspf(omit_album=True):
+    tracks_info = get_saved_tracks_list()
+    xspf = """<?xml version="1.0" encoding="UTF-8"?><playlist version="1" xmlns="http://xspf.org/ns/0/"><trackList>"""
+    for track_info in tracks_info:
+        xspf += get_track_xspf_fragment(track_info, omit_album=omit_album)
+    xspf += """</trackList></playlist>"""
+    logging.info("Converted saved tracks to XSPF format.")
     return xspf
 
 def get_track_details(track_uri):
@@ -141,6 +186,13 @@ def write_playlist_to_xspf_file(playlist_id, filename):
         f.write(xspf)
     logging.info(f"Wrote playlist {playlist_id} to file {path}.")
 
+def write_saved_tracks_to_xspf_file(filename):
+    xspf = convert_saved_tracks_to_xspf()
+    path = os.path.join(OUTPUT_PATH, filename + ".xspf")
+    with codecs.open(path, "w", "utf-8") as f:
+        f.write(xspf)
+    logging.info(f"Wrote saved tracks to file {path}.")
+
 def make_filename(text):
     return ''.join(SANITIZER.findall(text))
 
@@ -163,11 +215,17 @@ if __name__ == "__main__":
     setup_environment()
     try:
         access_token = authenticate_spotify()
+        save_songs = input("Do you want to back up your saved songs as well? (y/N): ").strip().lower()
+        if save_songs == 'y':
+            write_saved_tracks_to_xspf_file("SavedTracks")
         backup_playlists_to_xspf()
         logging.info("Backup process completed.")
     except Exception as e:
         logging.error(f"Failed to authenticate with Spotify. Error: {e}")
         setup_environment()
         access_token = authenticate_spotify()
+        save_songs = input("Do you want to back up your saved songs as well? (y/N): ").strip().lower()
+        if save_songs == 'y':
+            write_saved_tracks_to_xspf_file("SavedTracks")
         backup_playlists_to_xspf()
         logging.info("Backup process completed after re-authentication.")
