@@ -1,6 +1,6 @@
 # Overview
 
-This is a small Python-based tool for saving your Spotify playlists as [xspf](https://www.xspf.org/) files, allowing you share them and/or import them into other software.
+This is a small Python-based tool for saving your Spotify playlists (and, optionally, your saved songs) as [xspf](https://www.xspf.org/) files, allowing you share them and/or import them into other software.
 
 This is a fork of another repository that used the OAuth tokens previously available from Spotify's developer dashboard for testing. Since Spotify removed that functionality, I modified the code to use a client key and secret key from an apps created on the [Spotify developer dashboard](https://developer.spotify.com/dashboard). This process is a little bit more involved to get running, but not too bad.
 
