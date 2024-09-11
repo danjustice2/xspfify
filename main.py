@@ -1,59 +1,79 @@
-#!/usr/bin/python
 # -*- coding: utf-8 -*-
 import codecs
 import requests
 from xml.sax.saxutils import escape
 import re
 import logging
+import os
+import json
+from spotipy import Spotify
+from spotipy.oauth2 import SpotifyOAuth
+import argparse
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-SPOTIFY_BASE_URL = 'https://api.spotify.com'
-OAUTH_TOKEN = 'BQAEPRXttVZ9JMlAhVdjApVUWrLdgJWdIiywDxQAH37l2Zreowt5uJOi6wBJVVfdyaBulhrk4JA9zOiNWgSZ35ytUPOEyRsG4xhr9T_PCR3vIonRV9Y' # obtain this at https://developer.spotify.com/console/get-playlist-tracks/
-SPOTIFY_USERNAME = '12170631829' # set your username
+REDIRECT_URI = 'https://www.example.com/' # Set your redirect URI
+SPOTIFY_BASE_URL = "https://api.spotify.com"
+
+# Maximum 50. This is how many playlists the script will request from Spotify at a time. All your playlists will be saved by looping through the requests untill all playlists have been received.
 PLAYLIST_LIMIT = 50
+
+
 SONG_LIMIT = 100
-OUTPUT_PATH = '/home/dan/playlists' # set this to your desired path
+OUTPUT_PATH = os.path.expanduser('~/Playlists') # Use home directory for default path
 SANITIZER = re.compile('[a-zA-Z ()0-9]+')
+
+# Function to set up environment variables for Spotify credentials
+def setup_environment():
+    print("You can create your app and get your client ID and secret at: https://developer.spotify.com/dashboard")
+    client_id = input("Enter your Spotify Client ID: ")
+    client_secret = input("Enter your Spotify Client Secret: ")
+    global CLIENT_ID, CLIENT_SECRET
+    CLIENT_ID = client_id
+    CLIENT_SECRET = client_secret
+
+# Authenticate and get token
+def authenticate_spotify():
+    sp_oauth = SpotifyOAuth(client_id=CLIENT_ID, client_secret=CLIENT_SECRET, redirect_uri=REDIRECT_URI, scope="playlist-read-private")
+    token_info = sp_oauth.get_access_token()
+    return token_info['access_token']
 
 def get_auth_header():
     return {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        'Authorization': 'Bearer ' + OAUTH_TOKEN
+        'Authorization': 'Bearer ' + access_token
     }
 
-def get_playlists(user_id='me', limit=PLAYLIST_LIMIT, offset=0):
-    url = SPOTIFY_BASE_URL + f'/v1/users/{user_id}/playlists?limit={limit}&offset={offset}'
+def get_playlists(limit=PLAYLIST_LIMIT, offset=0):
+    url = SPOTIFY_BASE_URL + f'/v1/me/playlists?limit={limit}&offset={offset}'
     headers = get_auth_header()
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
         logging.error(f"Unable to fetch playlists. Status code: {response.status_code}, Message: {response.json()['error']['message']}")
         return []
-    logging.info(f"Fetched playlists for user {user_id}.")
+    logging.info("Fetched playlist data.")
     return response.json()
 
-def get_my_playlists(user_id='me', username=SPOTIFY_USERNAME):
+def get_my_playlists():
     offset = 0
-    playlists_data = get_playlists(user_id)
+    playlists_data = get_playlists()
     if not playlists_data:
         return []
     total = playlists_data['total']
     limit = PLAYLIST_LIMIT
     my_lists = []
     while offset < total:
-        playlists = get_playlists(user_id, offset=offset, limit=limit)
+        playlists = get_playlists(offset=offset, limit=limit)
         for p in playlists['items']:
-            owner = p['owner']['id']
-            if owner == username:
-                my_lists.append({
-                    'name': p['name'],
-                    'id': p['id'],
-                    'length': p['tracks']['total']
-                })
+            my_lists.append({
+                'name': p['name'],
+                'id': p['id'],
+                'length': p['tracks']['total']
+            })
         offset += limit
-    logging.info(f"Collected {len(my_lists)} playlists owned by {username}.")
+    logging.info(f"Collected {len(my_lists)} playlists.")
     return my_lists
 
 def get_playlist_tracks(playlist_id):
@@ -116,7 +136,7 @@ def get_basic_track_details(track_uri):
 
 def write_playlist_to_xspf_file(playlist_id, filename):
     xspf = convert_spotify_playlist_to_xspf(playlist_id)
-    path = OUTPUT_PATH + "/" + filename + ".xspf"
+    path = os.path.join(OUTPUT_PATH, filename + ".xspf")
     with codecs.open(path, "w", "utf-8") as f:
         f.write(xspf)
     logging.info(f"Wrote playlist {playlist_id} to file {path}.")
@@ -124,16 +144,30 @@ def write_playlist_to_xspf_file(playlist_id, filename):
 def make_filename(text):
     return ''.join(SANITIZER.findall(text))
 
-def backup_playlists_to_xspf(user_id='me', username=SPOTIFY_USERNAME):
-    playlists = get_my_playlists(user_id, username)
+def backup_playlists_to_xspf():
+    playlists = get_my_playlists()
     if not playlists:
         logging.info("No playlists found to back up.")
+        return
     for playlist in playlists:
+        write_playlist_to_xspf_file(playlist['id'], make_filename(playlist['name']))
         if playlist['length'] <= SONG_LIMIT:
-            write_playlist_to_xspf_file(playlist['id'], make_filename(playlist['name']))
             logging.info(f"Backed up playlist: {playlist['name']}")
+        else:
+            logging.warning(f"Backed up playlist over the limit of {SONG_LIMIT} tracks: {playlist['name']}")
 
 # Main script execution
 if __name__ == "__main__":
-    backup_playlists_to_xspf()
-    logging.info("Backup process completed.")
+    if not os.path.exists(OUTPUT_PATH):
+        os.makedirs(OUTPUT_PATH)
+    setup_environment()
+    try:
+        access_token = authenticate_spotify()
+        backup_playlists_to_xspf()
+        logging.info("Backup process completed.")
+    except Exception as e:
+        logging.error(f"Failed to authenticate with Spotify. Error: {e}")
+        setup_environment()
+        access_token = authenticate_spotify()
+        backup_playlists_to_xspf()
+        logging.info("Backup process completed after re-authentication.")
